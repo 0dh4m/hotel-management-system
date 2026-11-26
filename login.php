@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if ($stmt->rowCount() > 0) {
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        if (password_verify($password, $user['password']) || $password == 'admin123') {
+        if (password_verify($password, $user['password'])) {
             // تسجيل معلومات الجلسة (Session)
             $_SESSION['user_id'] = $user['id_user'];
             $_SESSION['username'] = $user['username'];

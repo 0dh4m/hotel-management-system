@@ -22,37 +22,65 @@ class Reservation {
         $nb_nuits = $interval->days;
         if($nb_nuits <= 0) $nb_nuits = 1;
 
+        // Reject invalid or overlapping stays for the same room.
+        if ($datetime2 <= $datetime1) {
+            return false;
+        }
+
+        $query_conflict = "SELECT COUNT(*) FROM " . $this->table_name . "
+                           WHERE id_chambre = :id_chambre
+                             AND statut_reservation NOT IN ('Annulée', 'Terminée')
+                             AND date_arrivee < :date_depart
+                             AND date_depart > :date_arrivee";
+        $stmt_conflict = $this->conn->prepare($query_conflict);
+        $stmt_conflict->bindParam(":id_chambre", $this->id_chambre);
+        $stmt_conflict->bindParam(":date_depart", $this->date_depart);
+        $stmt_conflict->bindParam(":date_arrivee", $this->date_arrivee);
+        $stmt_conflict->execute();
+        if ((int)$stmt_conflict->fetchColumn() > 0) {
+            return false;
+        }
+
         $query_prix = "SELECT prix_nuit FROM chambres WHERE id_chambre = :id_chambre LIMIT 1";
         $stmt_prix = $this->conn->prepare($query_prix);
         $stmt_prix->bindParam(":id_chambre", $this->id_chambre);
         $stmt_prix->execute();
         $row = $stmt_prix->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return false;
+        }
         $prix_nuit = $row['prix_nuit'];
 
         $this->montant_total = $nb_nuits * $prix_nuit;
 
-        $query = "INSERT INTO " . $this->table_name . " 
-                  SET id_client=:id_client, id_chambre=:id_chambre, 
-                      date_arrivee=:date_arrivee, date_depart=:date_depart, 
-                      montant_total=:montant_total";
-        
-        $stmt = $this->conn->prepare($query);
+        try {
+            $this->conn->beginTransaction();
 
-        $stmt->bindParam(":id_client", $this->id_client);
-        $stmt->bindParam(":id_chambre", $this->id_chambre);
-        $stmt->bindParam(":date_arrivee", $this->date_arrivee);
-        $stmt->bindParam(":date_depart", $this->date_depart);
-        $stmt->bindParam(":montant_total", $this->montant_total);
+            $query = "INSERT INTO " . $this->table_name . " 
+                      SET id_client=:id_client, id_chambre=:id_chambre, 
+                          date_arrivee=:date_arrivee, date_depart=:date_depart, 
+                          montant_total=:montant_total";
+            $stmt = $this->conn->prepare($query);
+            $stmt->bindParam(":id_client", $this->id_client);
+            $stmt->bindParam(":id_chambre", $this->id_chambre);
+            $stmt->bindParam(":date_arrivee", $this->date_arrivee);
+            $stmt->bindParam(":date_depart", $this->date_depart);
+            $stmt->bindParam(":montant_total", $this->montant_total);
+            $stmt->execute();
 
-        if($stmt->execute()) {
             $query_update_chambre = "UPDATE chambres SET statut = 'Occupée' WHERE id_chambre = :id_chambre";
             $stmt_update = $this->conn->prepare($query_update_chambre);
             $stmt_update->bindParam(":id_chambre", $this->id_chambre);
             $stmt_update->execute();
-            
+
+            $this->conn->commit();
             return true;
+        } catch (Exception $e) {
+            if ($this->conn->inTransaction()) {
+                $this->conn->rollBack();
+            }
+            return false;
         }
-        return false;
     }
 
     public function readAll() {
